@@ -172,11 +172,17 @@ jobs:
 
           Write-Host "Building DirectX 11 Panel GUI executable on 4 CPU cores: $($sln.FullName)"
           
-          # Inject DirectX Lib path into environment so linker always locates D3DX11.lib
+          # Inject DirectX Lib and ATL paths into environment so linker always locates D3DX11.lib & atls.lib
           $dxLibPath = (Resolve-Path "deps/DirectX/Lib/x64" -ErrorAction SilentlyContinue)
           if ($dxLibPath) {
             $env:LIB = "$($dxLibPath.Path);$env:LIB"
             Write-Host "Injected DirectX Lib directory into LINK LIB environment: $($dxLibPath.Path)"
+          }
+
+          $atlLib = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\atlmfc\lib\x64" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($atlLib) {
+            $env:LIB = "$($atlLib.FullName);$env:LIB"
+            Write-Host "Injected Visual Studio ATL library directory into LIB: $($atlLib.FullName)"
           }
 
           # Maximize compilation speed using all 4 cores with 64-bit compiler binaries
