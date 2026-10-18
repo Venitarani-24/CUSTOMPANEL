@@ -237,7 +237,7 @@ jobs:
         run: |
           $safeName = "${{ inputs.panel_name }}" -replace '[\\/*?:"<>|]', '_'
           
-          # Find output .exe files created by build
+          # Find output .exe or .dll files created by build
           $builtExes = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
             $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
           } | Sort-Object @{Expression={
@@ -248,15 +248,28 @@ jobs:
           }}, LastWriteTime -Descending
 
           $builtExe = $builtExes | Select-Object -First 1
+          $isDllTarget = $false
+
           if (-not $builtExe) {
-            Write-Error "Build failed: No compiled .exe found in project_template"
+            $builtDlls = Get-ChildItem -Path "project_template" -Recurse -Filter "*.dll" | Where-Object {
+              $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*" -and ($_.DirectoryName -match "bin" -or $_.DirectoryName -match "Release")
+            } | Sort-Object LastWriteTime -Descending
+            $builtExe = $builtDlls | Select-Object -First 1
+            if ($builtExe) {
+              $isDllTarget = $true
+              Write-Host "Target output is a compiled DLL: $($builtExe.FullName)"
+            }
+          }
+
+          if (-not $builtExe) {
+            Write-Error "Build failed: No compiled .exe or .dll found in project_template"
             exit 1
           }
 
-          Write-Host "Found compiled executable: $($builtExe.FullName) ($([math]::Round($builtExe.Length/1MB, 2)) MB)"
-          $finalExe = "$safeName.exe"
+          $ext = if ($isDllTarget) { "dll" } else { "exe" }
+          $finalExe = "$safeName.$ext"
           Copy-Item $builtExe.FullName -Destination $finalExe -Force
-          Write-Host "Created final executable: $finalExe"
+          Write-Host "Created final output binary: $finalExe"
 
           # Create a complete standalone package
           $finalZip = "$safeName-Package.zip"
