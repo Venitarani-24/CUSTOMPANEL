@@ -100,25 +100,41 @@ jobs:
             --keyauth-version "${{ inputs.keyauth_version }}" `
             --icon-url "${{ inputs.icon_url }}"
 
-      - name: Build C/C++ Executable (Release x64)
-        shell: cmd
+      - name: Build C/C++ Solution (Release x64)
+        shell: pwsh
         run: |
-          msbuild project_template\Panel.sln /p:Configuration=Release /p:Platform=x64 /t:Rebuild /m /v:minimal
+          # Auto-discover solution file (.sln) or project file (.vcxproj)
+          $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.sln" | Select-Object -First 1
+          if (-not $sln) {
+            $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.vcxproj" | Select-Object -First 1
+          }
+          if (-not $sln) {
+            Write-Error "No .sln or .vcxproj found in project_template!"
+            exit 1
+          }
+
+          Write-Host "Found solution to build: $($sln.FullName)"
+          
+          # Run MSBuild Release x64
+          msbuild $sln.FullName /p:Configuration=Release /p:Platform=x64 /t:Build /m /v:minimal
 
       - name: Prepare Final Executable
         shell: pwsh
         run: |
-          # Sanitize panel name for filename
           $safeName = "${{ inputs.panel_name }}" -replace '[\\/*?:"<>|]', '_'
-          $binDir = "project_template\build\x64\Release"
           
-          # Find output exe
-          $builtExe = Get-ChildItem -Path $binDir -Filter "*.exe" | Select-Object -First 1
+          # Find all output .exe files created by MSBuild
+          $builtExes = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
+            $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
+          } | Sort-Object LastWriteTime -Descending
+
+          $builtExe = $builtExes | Select-Object -First 1
           if (-not $builtExe) {
-            Write-Error "Build failed: No compiled .exe found in $binDir"
+            Write-Error "Build failed: No compiled .exe found in project_template"
             exit 1
           }
 
+          Write-Host "Found compiled executable: $($builtExe.FullName) ($([math]::Round($builtExe.Length/1MB, 2)) MB)"
           $finalExe = "$safeName.exe"
           Copy-Item $builtExe.FullName -Destination $finalExe -Force
           Write-Host "Created final executable: $finalExe"
