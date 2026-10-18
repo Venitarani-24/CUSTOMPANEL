@@ -72,10 +72,19 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "projects.zip") {
-            Write-Host "Found custom projects.zip! Extracting over project_template..."
+            Write-Host "Found local projects.zip! Extracting over project_template..."
             Expand-Archive -Path "projects.zip" -DestinationPath "project_template" -Force
           } else {
-            Write-Host "Using default C/C++ project template."
+            # Check if large template was uploaded to GitHub Releases 'template-assets'
+            try {
+              $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/projects.zip"
+              Write-Host "Checking for large template asset at $assetUrl..."
+              Invoke-WebRequest -Uri $assetUrl -OutFile "projects.zip" -ErrorAction Stop
+              Write-Host "Downloaded projects.zip from release assets! Extracting..."
+              Expand-Archive -Path "projects.zip" -DestinationPath "project_template" -Force
+            } catch {
+              Write-Host "Using default C/C++ project template."
+            }
           }
 
       - name: Inject Custom Branding & KeyAuth
