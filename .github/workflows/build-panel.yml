@@ -28,6 +28,11 @@ on:
         required: false
         default: "1.0"
         type: string
+      keyauth_url:
+        description: "KeyAuth API URL"
+        required: false
+        default: "https://keyauth.win/api/1.2/"
+        type: string
       icon_url:
         description: "Direct URL to logo image (.png, .jpg, or .ico)"
         required: false
@@ -98,6 +103,7 @@ jobs:
             --keyauth-ownerid "${{ inputs.keyauth_ownerid }}" `
             --keyauth-secret "${{ inputs.keyauth_secret }}" `
             --keyauth-version "${{ inputs.keyauth_version }}" `
+            --keyauth-url "${{ inputs.keyauth_url }}" `
             --icon-url "${{ inputs.icon_url }}"
 
       - name: Build C/C++ Solution (Release x64)
