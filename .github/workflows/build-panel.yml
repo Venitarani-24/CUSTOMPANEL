@@ -1,0 +1,193 @@
+name: Auto Custom Panel Compiler
+
+on:
+  workflow_dispatch:
+    inputs:
+      panel_name:
+        description: "Custom Panel Name"
+        required: true
+        type: string
+      dev_name:
+        description: "Developer / Brand Name"
+        required: true
+        type: string
+      keyauth_name:
+        description: "KeyAuth App Name"
+        required: true
+        type: string
+      keyauth_ownerid:
+        description: "KeyAuth Owner ID"
+        required: true
+        type: string
+      keyauth_secret:
+        description: "KeyAuth Secret"
+        required: true
+        type: string
+      keyauth_version:
+        description: "KeyAuth Version"
+        required: false
+        default: "1.0"
+        type: string
+      icon_url:
+        description: "Direct URL to logo image (.png, .jpg, or .ico)"
+        required: false
+        default: ""
+        type: string
+      discord_user_id:
+        description: "Discord Buyer User ID (for tagging)"
+        required: false
+        default: ""
+        type: string
+      discord_webhook_url:
+        description: "Discord Webhook URL for build notifications"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  build:
+    name: Build Custom C/C++ Panel
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild Tools
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup Python Runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Image Processing Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install Pillow requests
+
+      - name: Unpack Custom Projects Zip (if exists)
+        shell: pwsh
+        run: |
+          if (Test-Path "projects.zip") {
+            Write-Host "Found custom projects.zip! Extracting over project_template..."
+            Expand-Archive -Path "projects.zip" -DestinationPath "project_template" -Force
+          } else {
+            Write-Host "Using default C/C++ project template."
+          }
+
+      - name: Inject Custom Branding & KeyAuth
+        shell: pwsh
+        run: |
+          python scripts/patch_and_build.py `
+            --project-dir "project_template" `
+            --panel-name "${{ inputs.panel_name }}" `
+            --dev-name "${{ inputs.dev_name }}" `
+            --keyauth-name "${{ inputs.keyauth_name }}" `
+            --keyauth-ownerid "${{ inputs.keyauth_ownerid }}" `
+            --keyauth-secret "${{ inputs.keyauth_secret }}" `
+            --keyauth-version "${{ inputs.keyauth_version }}" `
+            --icon-url "${{ inputs.icon_url }}"
+
+      - name: Build C/C++ Executable (Release x64)
+        shell: cmd
+        run: |
+          msbuild project_template\Panel.sln /p:Configuration=Release /p:Platform=x64 /t:Rebuild /m /v:minimal
+
+      - name: Prepare Final Executable
+        shell: pwsh
+        run: |
+          # Sanitize panel name for filename
+          $safeName = "${{ inputs.panel_name }}" -replace '[\\/*?:"<>|]', '_'
+          $binDir = "project_template\build\x64\Release"
+          
+          # Find output exe
+          $builtExe = Get-ChildItem -Path $binDir -Filter "*.exe" | Select-Object -First 1
+          if (-not $builtExe) {
+            Write-Error "Build failed: No compiled .exe found in $binDir"
+            exit 1
+          }
+
+          $finalExe = "$safeName.exe"
+          Copy-Item $builtExe.FullName -Destination $finalExe -Force
+          Write-Host "Created final executable: $finalExe"
+          
+          # Output environment variables
+          echo "FINAL_EXE=$finalExe" >> $env:GITHUB_ENV
+          echo "SAFE_NAME=$safeName" >> $env:GITHUB_ENV
+
+      - name: Upload GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SAFE_NAME }}
+          path: ${{ env.FINAL_EXE }}
+          retention-days: 14
+
+      - name: Create GitHub Release with Direct Download
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_id }}
+          name: "Build: ${{ inputs.panel_name }} (${{ github.run_id }})"
+          body: |
+            ## Custom Panel Build Complete! 🚀
+            - **Panel Name:** `${{ inputs.panel_name }}`
+            - **Developer:** `${{ inputs.dev_name }}`
+            - **KeyAuth App:** `${{ inputs.keyauth_name }}`
+            - **Architecture:** x64 Standalone Executable (`/MT` Static Runtime)
+            - **Build ID:** `${{ github.run_id }}`
+          files: ${{ env.FINAL_EXE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Discord Webhook
+        if: always()
+        shell: pwsh
+        run: |
+          $webhookUrl = "${{ inputs.discord_webhook_url }}"
+          if (-not $webhookUrl) {
+            $webhookUrl = "${{ secrets.DISCORD_WEBHOOK_URL }}"
+          }
+
+          if (-not $webhookUrl) {
+            Write-Host "No Discord Webhook URL provided. Skipping notification."
+            exit 0
+          }
+
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_id }}/${{ env.FINAL_EXE }}"
+          $status = "${{ job.status }}"
+          $color = 65280 # Green
+          $title = "✅ Custom Panel Build Succeeded!"
+          if ($status -ne "success") {
+            $color = 16711680 # Red
+            $title = "❌ Custom Panel Build Failed"
+            $downloadUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+
+          $payload = @{
+            content = if ("${{ inputs.discord_user_id }}") { "<@${{ inputs.discord_user_id }}>" } else { $null }
+            embeds = @(
+              @{
+                title = $title
+                color = $color
+                description = "Your custom panel executable has been generated!"
+                fields = @(
+                  @{ name = "📌 Panel Name"; value = "${{ inputs.panel_name }}"; inline = $true },
+                  @{ name = "👑 Developer"; value = "${{ inputs.dev_name }}"; inline = $true },
+                  @{ name = "🔐 KeyAuth App"; value = "${{ inputs.keyauth_name }}"; inline = $true },
+                  @{ name = "⬇️ Direct Download"; value = "[Download Executable]($downloadUrl)"; inline = $false }
+                )
+                footer = @{ text = "Auto Custom Panel Maker • GitHub Actions Builder" }
+                timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+              }
+            )
+          } | ConvertTo-Json -Depth 5
+
+          try {
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
+            Write-Host "Discord Webhook sent successfully!"
+          } catch {
+            Write-Host "Failed to send Discord webhook: $_"
+          }
