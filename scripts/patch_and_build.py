@@ -397,8 +397,20 @@ def main():
         (re.compile(r'std::string\s+version\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string version = std::string(OBF("{safe_auth_version}"));'),
         (re.compile(r'std::string\s+url\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string url = std::string(OBF("{safe_auth_url}"));'),
 
-        # ProjectName in .vcxproj
+        # ProjectName in .vcxproj & AssemblyName in .csproj
         (re.compile(r'<ProjectName>[^<]*</ProjectName>'), f'<ProjectName>{safe_panel_name}</ProjectName>'),
+        (re.compile(r'<AssemblyName>[^<]*</AssemblyName>'), f'<AssemblyName>{safe_panel_name}</AssemblyName>'),
+
+        # C# AssemblyInfo.cs attributes
+        (re.compile(r'\[assembly:\s*AssemblyTitle\("[^"]*"\)\]'), f'[assembly: AssemblyTitle("{safe_panel_name}")]'),
+        (re.compile(r'\[assembly:\s*AssemblyProduct\("[^"]*"\)\]'), f'[assembly: AssemblyProduct("{safe_panel_name}")]'),
+        (re.compile(r'\[assembly:\s*AssemblyCompany\("[^"]*"\)\]'), f'[assembly: AssemblyCompany("{safe_dev_name}")]'),
+        (re.compile(r'\[assembly:\s*AssemblyCopyright\("[^"]*"\)\]'), f'[assembly: AssemblyCopyright("Copyright © {safe_dev_name} 2026")]'),
+
+        # C# WinForms Form1.Designer.cs
+        (re.compile(r'this\.label2\.Text\s*=\s*"[^"]*";'), f'this.label2.Text = "{safe_panel_name}";'),
+        (re.compile(r'this\.Text\s*=\s*"[^"]*";'), f'this.Text = "{safe_panel_name}";'),
+        (re.compile(r'"HIDDEN\s+ARC\s+PREMIUM"', re.IGNORECASE), f'"{safe_panel_name}"'),
 
         # ATL HWID in AntiLogin.h -> Win32 GetCurrentHwProfileA
         (re.compile(r'ATL::CAccessToken\s+accessToken;[\s\S]*?return\s+std::string\(CT2A\(currentUserSid\.Sid\(\)\)\);[\s\S]*?else[\s\S]*?\{[\s\S]*?return\s+"DEFAULT_HWID";[\s\S]*?\}'),
