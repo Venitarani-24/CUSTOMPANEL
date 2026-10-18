@@ -98,6 +98,7 @@ def main():
     parser.add_argument("--keyauth-ownerid", required=True, help="KeyAuth Owner ID")
     parser.add_argument("--keyauth-secret", required=True, help="KeyAuth Application Secret")
     parser.add_argument("--keyauth-version", default="1.0", help="KeyAuth Application Version")
+    parser.add_argument("--keyauth-url", default="https://keyauth.win/api/1.2/", help="KeyAuth API URL")
     parser.add_argument("--icon-url", default="", help="Direct URL to logo image")
     parser.add_argument("--icon-file", default="", help="Local path to custom logo")
     parser.add_argument("--zip-template", default="", help="Path to zip archive containing custom project")
@@ -139,6 +140,17 @@ def main():
     safe_auth_owner = sanitize_input(args.keyauth_ownerid)
     safe_auth_secret = sanitize_input(args.keyauth_secret)
     safe_auth_version = sanitize_input(args.keyauth_version)
+    safe_auth_url = sanitize_input(args.keyauth_url.strip() or "https://keyauth.win/api/1.2/")
+
+    # Parse host & path from URL
+    from urllib.parse import urlparse
+    parsed = urlparse(safe_auth_url)
+    auth_host = parsed.netloc or "keyauth.win"
+    auth_path = parsed.path or "/api/1.2/"
+    if not auth_path.endswith("/"):
+        auth_path += "/"
+
+    log(f"KeyAuth config: App='{safe_auth_name}', Owner='{safe_auth_owner}', URL='{safe_auth_url}', Host='{auth_host}'")
 
     replacements = {
         "__PLACEHOLDER_PANEL_NAME__": safe_panel_name,
@@ -147,17 +159,28 @@ def main():
         "__PLACEHOLDER_KEYAUTH_OWNERID__": safe_auth_owner,
         "__PLACEHOLDER_KEYAUTH_SECRET__": safe_auth_secret,
         "__PLACEHOLDER_KEYAUTH_VERSION__": safe_auth_version,
+        "__PLACEHOLDER_KEYAUTH_URL__": safe_auth_url,
 
         # KeyAuth patterns in Red X Cheats / ImGui panels
         'g_name = "EXTERNAL"': f'g_name = "{safe_auth_name}"',
         'g_ownerid = "6862743278"': f'g_ownerid = "{safe_auth_owner}"',
         'g_secret = "bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301"': f'g_secret = "{safe_auth_secret}"',
         'g_version = "1.0"': f'g_version = "{safe_auth_version}"',
+        'g_host = L"www.keyauth-manager.online"': f'g_host = L"{auth_host}"',
+        'g_path = L"/api/1.2/"': f'g_path = L"{auth_path}"',
 
         'OBF("EXTERNAL")': f'OBF("{safe_auth_name}")',
         'OBF("6862743278")': f'OBF("{safe_auth_owner}")',
         'OBF("bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301")': f'OBF("{safe_auth_secret}")',
         'OBF("RED X CHEATS")': f'OBF("{safe_panel_name}")',
+        'OBF("https://www.keyauth-manager.online/api/1.2/")': f'OBF("{safe_auth_url}")',
+        'OBF("https://keyauth.win/api/1.2/")': f'OBF("{safe_auth_url}")',
+
+        # URL and Host string replacements
+        "https://www.keyauth-manager.online/api/1.2/": safe_auth_url,
+        "https://keyauth.win/api/1.2/": safe_auth_url,
+        '"www.keyauth-manager.online"': f'"{auth_host}"',
+        '"keyauth.win"': f'"{auth_host}"',
     }
 
     # 4. Patch source files (config.h, resource.rc, main.cpp, or any .h/.cpp files)
