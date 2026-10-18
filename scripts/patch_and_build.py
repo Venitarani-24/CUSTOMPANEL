@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Auto Custom Panel Maker - Patch & Customization Script
-Used by GitHub Actions (and locally) to inject custom branding, logo, and KeyAuth credentials
-directly into the DirectX 11 Panel C/C++ project before compiling.
+Used by GitHub Actions (and locally) to inject custom branding, logo, developer name,
+and KeyAuth credentials directly into the DirectX 11 Panel C/C++ project before compiling.
 """
 
 import os
@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 import shutil
 import re
+import struct
 from pathlib import Path
 
 try:
@@ -52,7 +53,6 @@ def convert_image_to_ico(source_img: Path, output_ico: Path) -> bool:
     try:
         log(f"Converting image {source_img} to high-resolution Windows ICO...")
         img = Image.open(source_img)
-        # Convert to RGBA for clean transparency
         if img.mode != "RGBA":
             img = img.convert("RGBA")
 
@@ -64,6 +64,79 @@ def convert_image_to_ico(source_img: Path, output_ico: Path) -> bool:
     except Exception as e:
         log(f"Error converting image to ICO: {e}")
         return False
+
+
+def create_default_ico(dest_ico: Path) -> bool:
+    """Generate a clean default 32x32 RGBA Windows .ico file if none is provided."""
+    try:
+        if HAS_PIL:
+            img = Image.new("RGBA", (64, 64), color=(20, 24, 32, 255))
+            icon_sizes = [(64, 64), (48, 48), (32, 32), (16, 16)]
+            img.save(dest_ico, format="ICO", sizes=icon_sizes)
+            log(f"Default Windows ICO generated with Pillow at: {dest_ico}")
+            return True
+
+        # Raw binary ICO fallback (32x32 32-bit BGRA with alpha)
+        width, height = 32, 32
+        bmp_header_size = 40
+        img_data_size = width * height * 4
+        mask_data_size = ((width + 31) // 32) * 4 * height
+        bytes_in_res = bmp_header_size + img_data_size + mask_data_size
+
+        header = struct.pack("<HHH", 0, 1, 1)  # Reserved, ICO type, 1 image
+        entry = struct.pack("<BBBBHHII", width, height, 0, 0, 1, 32, bytes_in_res, 22)
+        bih = struct.pack("<IIIHHIIIIII", bmp_header_size, width, height * 2, 1, 32, 0, img_data_size + mask_data_size, 0, 0, 0, 0)
+        pixel = bytes([235, 120, 30, 255]) * (width * height)
+        mask = bytes(mask_data_size)
+
+        dest_ico.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest_ico, "wb") as f:
+            f.write(header + entry + bih + pixel + mask)
+        log(f"Default raw ICO generated at: {dest_ico}")
+        return True
+    except Exception as e:
+        log(f"Warning: could not create default icon: {e}")
+        return False
+
+
+def update_resources_rc(rc_path: Path, panel_name: str, dev_name: str, has_icon: bool):
+    """Ensure resources.rc contains icon and Windows VERSIONINFO metadata (Details tab / Task Manager)."""
+    icon_entry = '1 ICON "app.ico"\n\n' if has_icon else ''
+    content = f"""// Auto Custom Panel Maker - Generated Resource File
+{icon_entry}1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "{dev_name}"
+            VALUE "FileDescription", "{panel_name}"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "{panel_name}"
+            VALUE "LegalCopyright", "Copyright (C) 2026 {dev_name}"
+            VALUE "OriginalFilename", "{panel_name}.exe"
+            VALUE "ProductName", "{panel_name}"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+"""
+    try:
+        rc_path.write_text(content, encoding="utf-8")
+        log(f"Injected Windows Version Info & Branding into {rc_path.name}")
+    except Exception as e:
+        log(f"Warning: could not write version info to {rc_path.name}: {e}")
 
 
 def sanitize_input(value: str) -> str:
@@ -140,12 +213,18 @@ def main():
     elif args.icon_file and os.path.exists(args.icon_file):
         icon_source = Path(args.icon_file)
 
-    has_custom_ico = False
+    has_ico = False
     if icon_source:
         if convert_image_to_ico(icon_source, target_ico):
-            has_custom_ico = True
+            has_ico = True
         if temp_download.exists():
             temp_download.unlink()
+
+    # If no custom icon or conversion failed, generate default modern icon
+    if not has_ico and not target_ico.exists():
+        has_ico = create_default_ico(target_ico)
+    elif target_ico.exists():
+        has_ico = True
 
     # 3. Build replacement dictionaries
     safe_panel_name = sanitize_input(args.panel_name)
@@ -164,6 +243,22 @@ def main():
     if not auth_path.endswith("/"):
         auth_path += "/"
 
+    # Compute dual-tone title split for ImGui animated wave headers
+    # Example: "Phantom Loader" -> title1 = "Phantom ", title2 = "Loader"
+    # Example: "Red X Cheats" -> title1 = "Red X ", title2 = "Cheats"
+    # Example: "Apex" -> title1 = "Apex ", title2 = ""
+    panel_words = safe_panel_name.split()
+    if len(panel_words) > 1:
+        safe_title1 = " ".join(panel_words[:-1]) + " "
+        safe_title2 = panel_words[-1]
+    else:
+        safe_title1 = safe_panel_name + " "
+        safe_title2 = ""
+
+    # Safe folder name for AppData directory (without spaces or invalid path chars)
+    safe_folder_name = re.sub(r'[^a-zA-Z0-9_-]', '', safe_panel_name) or "CustomPanel"
+
+    log(f"Branding: Panel='{safe_panel_name}' (Title1='{safe_title1}', Title2='{safe_title2}'), Dev='{safe_dev_name}'")
     log(f"KeyAuth config: App='{safe_auth_name}', Owner='{safe_auth_owner}', URL='{safe_auth_url}', Host='{auth_host}'")
 
     replacements = {
@@ -175,7 +270,63 @@ def main():
         "__PLACEHOLDER_KEYAUTH_VERSION__": safe_auth_version,
         "__PLACEHOLDER_KEYAUTH_URL__": safe_auth_url,
 
-        # KeyAuth patterns in Red X Cheats / ImGui panels
+        # -------------------------------------------------------------
+        # 1. Dual-Tone Header Titles (Login Screen & Main Menu)
+        # -------------------------------------------------------------
+        'const char* title1 = "RED X ";': f'const char* title1 = "{safe_title1}";',
+        'const char* title2 = "CHEATS";': f'const char* title2 = "{safe_title2}";',
+        'const char* title1 = OBF("RED X ");': f'const char* title1 = OBF("{safe_title1}");',
+        'const char* title2 = OBF("CHEATS");': f'const char* title2 = OBF("{safe_title2}");',
+        'OBF("RED X ")': f'OBF("{safe_title1}")',
+        'OBF("CHEATS")': f'OBF("{safe_title2}")',
+
+        # -------------------------------------------------------------
+        # 2. Developer / Brand Name Replacements
+        # -------------------------------------------------------------
+        '"DEVELOPED BY Red Corporation"': f'"DEVELOPED BY {safe_dev_name}"',
+        '"DEVELOPED BY RED CORPORATION"': f'"DEVELOPED BY {safe_dev_name}"',
+        '"Developer: (Red Corporation)"': f'"Developer: ({safe_dev_name})"',
+        'OBF("Dev</>Red Corporation")': f'OBF("Dev</>{safe_dev_name}")',
+        '"Dev</>Red Corporation"': f'"Dev</>{safe_dev_name}"',
+        '"Red Corporation"': f'"{safe_dev_name}"',
+        'OBF("Red Corporation")': f'OBF("{safe_dev_name}")',
+
+        # -------------------------------------------------------------
+        # 3. Panel Name, Watermark, ESP Overlay, & Notifications
+        # -------------------------------------------------------------
+        'const char* watermarkLabel = "RED X CHEATS";': f'const char* watermarkLabel = "{safe_panel_name}";',
+        'const char* titleText = "RED X CHEATS";': f'const char* titleText = "{safe_panel_name}";',
+        'OBF("RED X CHEATS")': f'OBF("{safe_panel_name}")',
+        '"RED X CHEATS"': f'"{safe_panel_name}"',
+        '"REDX CHEATS"': f'"{safe_panel_name}"',
+        'OBF("REDX CHEATS")': f'OBF("{safe_panel_name}")',
+        '"WELCOME TO RED X CHEATS"': f'"WELCOME TO {safe_panel_name}"',
+        '"Welcome To RED X CHEATS': f'"Welcome To {safe_panel_name}',
+        '<ProjectName>RED X CHEATS</ProjectName>': f'<ProjectName>{safe_panel_name}</ProjectName>',
+
+        # -------------------------------------------------------------
+        # 4. Discord Rich Presence (RPC) & Status
+        # -------------------------------------------------------------
+        '"RED X CHEATS • Connecting"': f'"{safe_panel_name} • Connecting"',
+        '"RED X CHEATS • Lobby • "': f'"{safe_panel_name} • Lobby • "',
+        '"RED X CHEATS • "': f'"{safe_panel_name} • "',
+        'rpc.smallImageText = "Developer: (Red Corporation)";': f'rpc.smallImageText = "Developer: ({safe_dev_name})";',
+
+        # -------------------------------------------------------------
+        # 5. Win32 Window Title & Class Name
+        # -------------------------------------------------------------
+        'CreateWindowExW(NULL, wc.lpszClassName, L"PP",': f'CreateWindowExW(NULL, wc.lpszClassName, L"{safe_panel_name}",',
+        'wc.lpszMenuName = L"PP";': f'wc.lpszMenuName = L"{safe_panel_name}";',
+        'wc.lpszClassName = L"PP";': f'wc.lpszClassName = L"{safe_panel_name}";',
+
+        # -------------------------------------------------------------
+        # 6. AppData Folder Name
+        # -------------------------------------------------------------
+        '\\ArmoraaExternal': f'\\{safe_folder_name}',
+
+        # -------------------------------------------------------------
+        # 7. KeyAuth Credentials & Endpoints
+        # -------------------------------------------------------------
         'g_name = "EXTERNAL"': f'g_name = "{safe_auth_name}"',
         'g_ownerid = "6862743278"': f'g_ownerid = "{safe_auth_owner}"',
         'g_secret = "bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301"': f'g_secret = "{safe_auth_secret}"',
@@ -186,23 +337,17 @@ def main():
         'OBF("EXTERNAL")': f'OBF("{safe_auth_name}")',
         'OBF("6862743278")': f'OBF("{safe_auth_owner}")',
         'OBF("bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301")': f'OBF("{safe_auth_secret}")',
-        'OBF("RED X CHEATS")': f'OBF("{safe_panel_name}")',
         'OBF("https://www.keyauth-manager.online/api/1.2/")': f'OBF("{safe_auth_url}")',
         'OBF("https://keyauth.win/api/1.2/")': f'OBF("{safe_auth_url}")',
 
-        # Panel Name & Branding
-        '"RED X CHEATS"': f'"{safe_panel_name}"',
-        '"WELCOME TO RED X CHEATS"': f'"WELCOME TO {safe_panel_name}"',
-        '"Welcome To RED X CHEATS': f'"Welcome To {safe_panel_name}',
-        '<ProjectName>RED X CHEATS</ProjectName>': f'<ProjectName>{safe_panel_name}</ProjectName>',
-
-        # URL and Host string replacements
         "https://www.keyauth-manager.online/api/1.2/": safe_auth_url,
         "https://keyauth.win/api/1.2/": safe_auth_url,
         '"www.keyauth-manager.online"': f'"{auth_host}"',
         '"keyauth.win"': f'"{auth_host}"',
 
-        # Remove missing ATL header dependencies on standard Windows CI runners
+        # -------------------------------------------------------------
+        # 8. Build Fixes for CI Runners
+        # -------------------------------------------------------------
         '#include "atlsecurity.h"': '// #include "atlsecurity.h"',
         '#include <atlsecurity.h>': '// #include <atlsecurity.h>',
         '#include <atlbase.h>': '// #include <atlbase.h>',
@@ -210,6 +355,33 @@ def main():
     }
 
     regex_replacements = [
+        # Dual-tone title headers in main.cpp
+        (re.compile(r'const\s+char\*\s+title1\s*=\s*"[^"]*";'), f'const char* title1 = "{safe_title1}";'),
+        (re.compile(r'const\s+char\*\s+title2\s*=\s*"[^"]*";'), f'const char* title2 = "{safe_title2}";'),
+        (re.compile(r'const\s+char\*\s+title1\s*=\s*OBF\("[^"]*"\);'), f'const char* title1 = OBF("{safe_title1}");'),
+        (re.compile(r'const\s+char\*\s+title2\s*=\s*OBF\("[^"]*"\);'), f'const char* title2 = OBF("{safe_title2}");'),
+
+        # Developer Name replacements
+        (re.compile(r'"DEVELOPED\s+BY\s+[^"]*"', re.IGNORECASE), f'"DEVELOPED BY {safe_dev_name}"'),
+        (re.compile(r'"Developer:\s*\([^)]*\)"', re.IGNORECASE), f'"Developer: ({safe_dev_name})"'),
+        (re.compile(r'OBF\("Dev</>[^"]*"\)'), f'OBF("Dev</>{safe_dev_name}")'),
+        (re.compile(r'"Dev</>[^"]*"'), f'"Dev</>{safe_dev_name}"'),
+        (re.compile(r'OBF\("Red Corporation"\)'), f'OBF("{safe_dev_name}")'),
+        (re.compile(r'"Red Corporation"'), f'"{safe_dev_name}"'),
+
+        # Watermark & Visual.cpp Title & Notifications
+        (re.compile(r'const\s+char\*\s+watermarkLabel\s*=\s*(?:OBF\()?"[^"]*"\)?;'), f'const char* watermarkLabel = "{safe_panel_name}";'),
+        (re.compile(r'const\s+char\*\s+titleText\s*=\s*(?:OBF\()?"[^"]*"\)?;'), f'const char* titleText = "{safe_panel_name}";'),
+        (re.compile(r'"WELCOME\s+TO\s+[^"]*"', re.IGNORECASE), f'"WELCOME TO {safe_panel_name}"'),
+        (re.compile(r'OBF\("Welcome\s+To\s+[^"(]+\('), f'OBF("Welcome To {safe_panel_name} ('),
+        (re.compile(r'"Welcome\s+To\s+[^"(]+\('), f'"Welcome To {safe_panel_name} ('),
+        (re.compile(r'OBF\("RED\s*X\s*CHEATS"\)', re.IGNORECASE), f'OBF("{safe_panel_name}")'),
+        (re.compile(r'"RED\s*X\s*CHEATS"', re.IGNORECASE), f'"{safe_panel_name}"'),
+        (re.compile(r'"RED\s*X\s*CHEATS\s*•'), f'"{safe_panel_name} •'),
+
+        # Window creation
+        (re.compile(r'CreateWindowExW\(NULL,\s*wc\.lpszClassName,\s*L"[^"]*",'), f'CreateWindowExW(NULL, wc.lpszClassName, L"{safe_panel_name}",'),
+
         # CustomKeyAuth.hpp
         (re.compile(r'inline\s+std::string\s+g_name\s*=\s*"[^"]*";'), f'inline std::string g_name = "{safe_auth_name}";'),
         (re.compile(r'inline\s+std::string\s+g_ownerid\s*=\s*"[^"]*";'), f'inline std::string g_ownerid = "{safe_auth_owner}";'),
@@ -242,24 +414,21 @@ def main():
                 patch_file_content(p, replacements, regex_replacements)
 
             # If an existing icon file is found, replace it with the new custom icon
-            if p.suffix.lower() == ".ico" and has_custom_ico and p != target_ico:
+            if p.suffix.lower() == ".ico" and has_ico and p != target_ico:
                 try:
                     shutil.copy(target_ico, p)
                     log(f"Replaced project icon: {p.name}")
                 except Exception:
                     pass
 
-            # If resources.rc is found and we have a custom icon, embed it
-            if p.name.lower() in ["resources.rc", "resource.rc"] and has_custom_ico:
-                try:
-                    rc_content = p.read_text(encoding="utf-8", errors="ignore")
-                    if "app.ico" not in rc_content:
-                        rc_content += '\n1 ICON "app.ico"\n'
-                        p.write_text(rc_content, encoding="utf-8")
-                        # Copy app.ico to the same directory as the .rc file
-                    shutil.copy(target_ico, p.parent / "app.ico")
-                except Exception as e:
-                    log(f"Warning: could not inject icon into {p.name}: {e}")
+            # Inject full icon and Windows Version Info (Company/Product/Description) into resources.rc
+            if p.name.lower() in ["resources.rc", "resource.rc"]:
+                update_resources_rc(p, safe_panel_name, safe_dev_name, has_ico)
+                if has_ico and target_ico.exists():
+                    try:
+                        shutil.copy(target_ico, p.parent / "app.ico")
+                    except Exception as e:
+                        log(f"Warning: could not copy icon to {p.parent}: {e}")
 
     # 5. Ensure DirectX Lib/x64 directory and d3dx11.lib exist
     deps_dx = Path(__file__).resolve().parent.parent / "deps" / "DirectX" / "Lib" / "x64"
