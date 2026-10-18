@@ -67,8 +67,9 @@ def convert_image_to_ico(source_img: Path, output_ico: Path) -> bool:
 
 
 def sanitize_input(value: str) -> str:
-    """Escape quotes and backslashes for C/C++ string literals."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape quotes/backslashes and strip newlines to prevent C2001 newline in constant."""
+    val = value.replace("\r", "").replace("\n", "").strip()
+    return val.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def patch_file_content(file_path: Path, replacements: dict, regex_replacements: list):
