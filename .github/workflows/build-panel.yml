@@ -71,23 +71,32 @@ jobs:
       - name: Fast Unpack Custom Projects Zip (7-Zip)
         shell: pwsh
         run: |
-          if (-not (Test-Path "projects.zip")) {
-            $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/projects.zip"
-            Write-Host "Downloading projects.zip template asset..."
-            Invoke-WebRequest -Uri $assetUrl -OutFile "projects.zip" -ErrorAction SilentlyContinue
+          $needDownload = $true
+          if (Test-Path "projects.zip") {
+            $item = Get-Item "projects.zip"
+            if ($item.Length -gt 10MB) {
+              $needDownload = $false
+              Write-Host "Local projects.zip verified ($([math]::Round($item.Length / 1MB, 2)) MB)"
+            } else {
+              Write-Host "Existing projects.zip is only $($item.Length) bytes (dummy/old), removing..."
+              Remove-Item "projects.zip" -Force
+            }
           }
 
-          if (Test-Path "projects.zip") {
-            Write-Host "Unpacking projects.zip via high-speed 7-Zip..."
-            # Clean project_template directory first to remove any dummy files!
-            if (Test-Path "project_template") {
-              Remove-Item "project_template" -Recurse -Force
-            }
-            7z x "projects.zip" -o"project_template" -y | Out-Null
-            Write-Host "Extracted project template in 1 second!"
-          } else {
-            Write-Host "Using default C/C++ project template."
+          if ($needDownload) {
+            $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/projects.zip"
+            Write-Host "Downloading 58MB DirectX 11 Panel template from $assetUrl..."
+            Invoke-WebRequest -Uri $assetUrl -OutFile "projects.zip"
+            $dlSize = (Get-Item "projects.zip").Length
+            Write-Host "Download complete: $([math]::Round($dlSize / 1MB, 2)) MB"
           }
+
+          Write-Host "Unpacking projects.zip via high-speed 7-Zip..."
+          if (Test-Path "project_template") {
+            Remove-Item "project_template" -Recurse -Force
+          }
+          7z x "projects.zip" -o"project_template" -y | Out-Null
+          Write-Host "Extracted DirectX 11 Panel project template successfully!"
 
       - name: Restore NuGet Packages & Dependencies
         shell: pwsh
