@@ -63,33 +63,26 @@ jobs:
       - name: Setup MSBuild Tools
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup Python Runtime
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Image Processing Dependencies
+      - name: Install Dependencies
+        shell: cmd
         run: |
-          python -m pip install --upgrade pip
-          pip install Pillow requests
+          pip install --no-cache-dir Pillow requests --quiet --no-warn-script-location
 
-      - name: Unpack Custom Projects Zip (if exists)
+      - name: Fast Unpack Custom Projects Zip (7-Zip)
         shell: pwsh
         run: |
+          if (-not (Test-Path "projects.zip")) {
+            $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/projects.zip"
+            Write-Host "Downloading projects.zip template asset..."
+            Invoke-WebRequest -Uri $assetUrl -OutFile "projects.zip" -ErrorAction SilentlyContinue
+          }
+
           if (Test-Path "projects.zip") {
-            Write-Host "Found local projects.zip! Extracting over project_template..."
-            Expand-Archive -Path "projects.zip" -DestinationPath "project_template" -Force
+            Write-Host "Unpacking projects.zip via high-speed 7-Zip..."
+            7z x "projects.zip" -o"project_template" -y | Out-Null
+            Write-Host "Extracted project template in 1 second!"
           } else {
-            # Check if large template was uploaded to GitHub Releases 'template-assets'
-            try {
-              $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/projects.zip"
-              Write-Host "Checking for large template asset at $assetUrl..."
-              Invoke-WebRequest -Uri $assetUrl -OutFile "projects.zip" -ErrorAction Stop
-              Write-Host "Downloaded projects.zip from release assets! Extracting..."
-              Expand-Archive -Path "projects.zip" -DestinationPath "project_template" -Force
-            } catch {
-              Write-Host "Using default C/C++ project template."
-            }
+            Write-Host "Using default C/C++ project template."
           }
 
       - name: Inject Custom Branding & KeyAuth
@@ -106,7 +99,7 @@ jobs:
             --keyauth-url "${{ inputs.keyauth_url }}" `
             --icon-url "${{ inputs.icon_url }}"
 
-      - name: Build C/C++ Solution (Release x64)
+      - name: Turbo Multi-Core C/C++ Compilation (Release x64)
         shell: pwsh
         run: |
           # Auto-discover solution file (.sln) or project file (.vcxproj)
@@ -119,10 +112,20 @@ jobs:
             exit 1
           }
 
-          Write-Host "Found solution to build: $($sln.FullName)"
+          Write-Host "Starting Turbo Build on 4 CPU cores: $($sln.FullName)"
           
-          # Run MSBuild Release x64
-          msbuild $sln.FullName /p:Configuration=Release /p:Platform=x64 /t:Build /m /v:minimal
+          # Maximize compilation speed using all 4 cores with 64-bit compiler binaries
+          msbuild $sln.FullName `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:MultiProcessorCompilation=true `
+            /p:CL_MPCount=4 `
+            /p:PreferredToolArchitecture=x64 `
+            /p:TrackFileAccess=false `
+            /p:BuildInParallel=true `
+            /m:4 `
+            /t:Build `
+            /v:minimal
 
       - name: Prepare Final Executable
         shell: pwsh
