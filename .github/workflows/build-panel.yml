@@ -230,15 +230,85 @@ jobs:
               /m:4 `
               /t:Build `
               /v:minimal
+      - name: Build C# Loader Executable with Embedded Client.dll & cimgui.dll
+        shell: pwsh
+        run: |
+          $projType = "${{ inputs.project_type }}"
+          
+          # Check if an .exe was already built or if we need to package Client.dll into C# Loader
+          $builtExe = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
+            $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
+          } | Select-Object -First 1
+
+          # Find compiled Client.dll
+          $compiledClientDll = Get-ChildItem -Path "project_template" -Recurse -Filter "*.dll" | Where-Object {
+            $_.Name -match "^client\.dll$" -and ($_.DirectoryName -match "bin" -or $_.DirectoryName -match "Release")
+          } | Select-Object -First 1
+
+          if ($compiledClientDll -or (-not $builtExe -and ($projType -eq "silent_aim" -or $projType -eq "csharp_loader"))) {
+            Write-Host "Assembling C# Loader Executable (.exe) with compiled DLLs..."
+            
+            # Download and unpack csharp_loader.zip into loader_template
+            $loaderZip = "csharp_loader.zip"
+            if (-not (Test-Path $loaderZip)) {
+              $assetUrl = "https://github.com/${{ github.repository }}/releases/download/template-assets/$loaderZip"
+              Invoke-WebRequest -Uri $assetUrl -OutFile $loaderZip
+            }
+            if (Test-Path "loader_template") { Remove-Item "loader_template" -Recurse -Force }
+            7z x $loaderZip -o"loader_template" -p1 -y -bso0 -bsp0
+            $global:LASTEXITCODE = 0
+
+            # Find LOADER project directory
+            $loaderProj = Get-ChildItem -Path "loader_template" -Recurse -Filter "LOADER.csproj" | Select-Object -First 1
+            if ($loaderProj) {
+              $loaderDir = $loaderProj.DirectoryName
+              
+              # Copy compiled Client.dll into LOADER folder
+              if ($compiledClientDll) {
+                Copy-Item $compiledClientDll.FullName -Destination "$loaderDir/Client.dll" -Force
+                Write-Host "Injected compiled Client.dll into C# Loader: $loaderDir/Client.dll"
+              }
+
+              # Check for cimgui.dll in project_template, deps, or loader_template
+              $cimgui = Get-ChildItem -Path "project_template" -Recurse -Filter "cimgui.dll" | Select-Object -First 1
+              if (-not $cimgui) {
+                $cimgui = Get-ChildItem -Path "loader_template" -Recurse -Filter "cimgui.dll" | Select-Object -First 1
+              }
+              if ($cimgui) {
+                Copy-Item $cimgui.FullName -Destination "$loaderDir/cimgui.dll" -Force
+                Write-Host "Injected cimgui.dll into C# Loader: $loaderDir/cimgui.dll"
+              }
+
+              # Inject custom branding into C# Loader
+              python scripts/patch_and_build.py `
+                --project-dir "loader_template" `
+                --panel-name "${{ inputs.panel_name }}" `
+                --dev-name "${{ inputs.dev_name }}" `
+                --keyauth-name "${{ inputs.keyauth_name }}" `
+                --keyauth-ownerid "${{ inputs.keyauth_ownerid }}" `
+                --keyauth-secret "${{ inputs.keyauth_secret }}" `
+                --keyauth-version "${{ inputs.keyauth_version }}" `
+                --keyauth-url "${{ inputs.keyauth_url }}" `
+                --icon-url "${{ inputs.icon_url }}"
+
+              # Restore and build the Loader solution
+              $loaderSln = Get-ChildItem -Path "loader_template" -Recurse -Filter "*.sln" | Select-Object -First 1
+              $targetBuild = if ($loaderSln) { $loaderSln.FullName } else { $loaderProj.FullName }
+              
+              Write-Host "Building C# Loader Standalone Executable: $targetBuild"
+              nuget restore $targetBuild -Verbosity quiet -NonInteractive
+              msbuild $targetBuild /p:Configuration=Release /v:minimal
+            }
           }
 
       - name: Prepare Final Executable & Bundle Native Dependencies
         shell: pwsh
         run: |
           $safeName = "${{ inputs.panel_name }}" -replace '[\\/*?:"<>|]', '_'
+          $searchDirs = @("loader_template", "project_template") | Where-Object { Test-Path $_ }
           
-          # Find output .exe or .dll files created by build
-          $builtExes = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
+          # Find output .exe files created by build
+          $builtExes = Get-ChildItem -Path $searchDirs -Recurse -Filter "*.exe" | Where-Object {
             $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
           } | Sort-Object @{Expression={
             if ($_.DirectoryName -match "bin") { 0 }
@@ -251,7 +321,7 @@ jobs:
           $isDllTarget = $false
 
           if (-not $builtExe) {
-            $builtDlls = Get-ChildItem -Path "project_template" -Recurse -Filter "*.dll" | Where-Object {
+            $builtDlls = Get-ChildItem -Path $searchDirs -Recurse -Filter "*.dll" | Where-Object {
               $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*" -and ($_.DirectoryName -match "bin" -or $_.DirectoryName -match "Release")
             } | Sort-Object LastWriteTime -Descending
             $builtExe = $builtDlls | Select-Object -First 1
@@ -262,7 +332,7 @@ jobs:
           }
 
           if (-not $builtExe) {
-            Write-Error "Build failed: No compiled .exe or .dll found in project_template"
+            Write-Error "Build failed: No compiled .exe or .dll found!"
             exit 1
           }
 
