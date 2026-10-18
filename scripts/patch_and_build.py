@@ -133,13 +133,31 @@ def main():
             temp_download.unlink()
 
     # 3. Build replacement dictionary
+    safe_panel_name = sanitize_input(args.panel_name)
+    safe_dev_name = sanitize_input(args.dev_name)
+    safe_auth_name = sanitize_input(args.keyauth_name)
+    safe_auth_owner = sanitize_input(args.keyauth_ownerid)
+    safe_auth_secret = sanitize_input(args.keyauth_secret)
+    safe_auth_version = sanitize_input(args.keyauth_version)
+
     replacements = {
-        "__PLACEHOLDER_PANEL_NAME__": sanitize_input(args.panel_name),
-        "__PLACEHOLDER_DEV_NAME__": sanitize_input(args.dev_name),
-        "__PLACEHOLDER_KEYAUTH_NAME__": sanitize_input(args.keyauth_name),
-        "__PLACEHOLDER_KEYAUTH_OWNERID__": sanitize_input(args.keyauth_ownerid),
-        "__PLACEHOLDER_KEYAUTH_SECRET__": sanitize_input(args.keyauth_secret),
-        "__PLACEHOLDER_KEYAUTH_VERSION__": sanitize_input(args.keyauth_version),
+        "__PLACEHOLDER_PANEL_NAME__": safe_panel_name,
+        "__PLACEHOLDER_DEV_NAME__": safe_dev_name,
+        "__PLACEHOLDER_KEYAUTH_NAME__": safe_auth_name,
+        "__PLACEHOLDER_KEYAUTH_OWNERID__": safe_auth_owner,
+        "__PLACEHOLDER_KEYAUTH_SECRET__": safe_auth_secret,
+        "__PLACEHOLDER_KEYAUTH_VERSION__": safe_auth_version,
+
+        # KeyAuth patterns in Red X Cheats / ImGui panels
+        'g_name = "EXTERNAL"': f'g_name = "{safe_auth_name}"',
+        'g_ownerid = "6862743278"': f'g_ownerid = "{safe_auth_owner}"',
+        'g_secret = "bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301"': f'g_secret = "{safe_auth_secret}"',
+        'g_version = "1.0"': f'g_version = "{safe_auth_version}"',
+
+        'OBF("EXTERNAL")': f'OBF("{safe_auth_name}")',
+        'OBF("6862743278")': f'OBF("{safe_auth_owner}")',
+        'OBF("bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301")': f'OBF("{safe_auth_secret}")',
+        'OBF("RED X CHEATS")': f'OBF("{safe_panel_name}")',
     }
 
     # 4. Patch source files (config.h, resource.rc, main.cpp, or any .h/.cpp files)
@@ -149,6 +167,13 @@ def main():
             p = Path(root) / f
             if p.suffix.lower() in extensions_to_check:
                 patch_file_content(p, replacements)
+            # If an icon file is found anywhere in the project, replace it with the new custom icon
+            if p.suffix.lower() == ".ico" and target_ico.exists() and p != target_ico:
+                try:
+                    shutil.copy(target_ico, p)
+                    log(f"Replaced project icon: {p.name}")
+                except Exception:
+                    pass
 
     log("Customization complete! Source code is ready for compilation.")
 
