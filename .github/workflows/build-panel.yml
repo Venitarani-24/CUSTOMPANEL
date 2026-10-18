@@ -79,10 +79,38 @@ jobs:
 
           if (Test-Path "projects.zip") {
             Write-Host "Unpacking projects.zip via high-speed 7-Zip..."
+            # Clean project_template directory first to remove any dummy files!
+            if (Test-Path "project_template") {
+              Remove-Item "project_template" -Recurse -Force
+            }
             7z x "projects.zip" -o"project_template" -y | Out-Null
             Write-Host "Extracted project template in 1 second!"
           } else {
             Write-Host "Using default C/C++ project template."
+          }
+
+      - name: Restore NuGet Packages & Dependencies
+        shell: pwsh
+        run: |
+          # Discover Panel solution or project
+          $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*external*.sln" | Select-Object -First 1
+          if (-not $sln) {
+            $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.sln" | Select-Object -First 1
+          }
+          if (-not $sln) {
+            $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.vcxproj" | Select-Object -First 1
+          }
+
+          if ($sln) {
+            Write-Host "Restoring NuGet packages for: $($sln.FullName)"
+            nuget restore $sln.FullName -Verbosity quiet -NonInteractive
+          }
+
+          # Ensure freetype / native packages are unpacked
+          Get-ChildItem -Path "project_template" -Recurse -Filter "*.nupkg" | ForEach-Object {
+            $targetDir = $_.DirectoryName
+            Write-Host "Unpacking native package: $($_.Name) -> $targetDir"
+            7z x $_.FullName -o"$targetDir" -y | Out-Null
           }
 
       - name: Inject Custom Branding & KeyAuth
@@ -102,17 +130,23 @@ jobs:
       - name: Turbo Multi-Core C/C++ Compilation (Release x64)
         shell: pwsh
         run: |
-          # Auto-discover solution file (.sln) or project file (.vcxproj)
-          $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.sln" | Select-Object -First 1
+          # Target the DirectX 11 Panel GUI solution/project directly
+          $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*external*.sln" | Select-Object -First 1
+          if (-not $sln) {
+            $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.sln" | Select-Object -First 1
+          }
+          if (-not $sln) {
+            $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*example_win32_directx11*.vcxproj" | Select-Object -First 1
+          }
           if (-not $sln) {
             $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.vcxproj" | Select-Object -First 1
           }
           if (-not $sln) {
-            Write-Error "No .sln or .vcxproj found in project_template!"
+            Write-Error "No Panel .sln or .vcxproj found in project_template!"
             exit 1
           }
 
-          Write-Host "Starting Turbo Build on 4 CPU cores: $($sln.FullName)"
+          Write-Host "Building DirectX 11 Panel GUI executable on 4 CPU cores: $($sln.FullName)"
           
           # Maximize compilation speed using all 4 cores with 64-bit compiler binaries
           msbuild $sln.FullName `
@@ -132,10 +166,14 @@ jobs:
         run: |
           $safeName = "${{ inputs.panel_name }}" -replace '[\\/*?:"<>|]', '_'
           
-          # Find all output .exe files created by MSBuild
+          # Find all output .exe files created by MSBuild, prioritizing EXE folder and Release folder
           $builtExes = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
             $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
-          } | Sort-Object LastWriteTime -Descending
+          } | Sort-Object @{Expression={
+            if ($_.DirectoryName -match "EXE") { 0 }
+            elseif ($_.DirectoryName -match "Release") { 1 }
+            else { 2 }
+          }}, LastWriteTime -Descending
 
           $builtExe = $builtExes | Select-Object -First 1
           if (-not $builtExe) {
@@ -143,7 +181,7 @@ jobs:
             exit 1
           }
 
-          Write-Host "Found compiled executable: $($builtExe.FullName) ($([math]::Round($builtExe.Length/1MB, 2)) MB)"
+          Write-Host "Found compiled Panel GUI executable: $($builtExe.FullName) ($([math]::Round($builtExe.Length/1MB, 2)) MB)"
           $finalExe = "$safeName.exe"
           Copy-Item $builtExe.FullName -Destination $finalExe -Force
           Write-Host "Created final executable: $finalExe"
