@@ -118,7 +118,8 @@ jobs:
           if (Test-Path "project_template") {
             Remove-Item "project_template" -Recurse -Force
           }
-          7z x $targetZip -o"project_template" -y | Out-Null
+          7z x $targetZip -o"project_template" -y -bso0 -bsp0
+          $global:LASTEXITCODE = 0
           Write-Host "Extracted $projType project template successfully!"
 
           # Ensure ext/DirectX/Lib/x64 has all required DirectX libraries (d3dx11.lib, etc.)
@@ -153,18 +154,15 @@ jobs:
 
           if ($sln) {
             Write-Host "Restoring dependencies for: $($sln.FullName)"
-            if ($sln.Extension -eq ".csproj") {
-              dotnet restore $sln.FullName
-            } else {
-              nuget restore $sln.FullName -Verbosity quiet -NonInteractive
-            }
+            nuget restore $sln.FullName -Verbosity quiet -NonInteractive
           }
 
           # Ensure freetype / native packages are unpacked
           Get-ChildItem -Path "project_template" -Recurse -Filter "*.nupkg" | ForEach-Object {
             $targetDir = $_.DirectoryName
             Write-Host "Unpacking native package: $($_.Name) -> $targetDir"
-            7z x $_.FullName -o"$targetDir" -y | Out-Null
+            7z x $_.FullName -o"$targetDir" -y -bso0 -bsp0
+            $global:LASTEXITCODE = 0
           }
 
       - name: Inject Custom Branding & KeyAuth
@@ -189,17 +187,13 @@ jobs:
 
           if ($isCSharp) {
             Write-Host "Detected C# Project / Loader!"
-            $csproj = Get-ChildItem -Path "project_template" -Recurse -Filter "*.csproj" | Select-Object -First 1
             $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*.sln" | Select-Object -First 1
-            $targetBuild = if ($csproj) { $csproj.FullName } else { $sln.FullName }
+            $csproj = Get-ChildItem -Path "project_template" -Recurse -Filter "*.csproj" | Select-Object -First 1
+            $targetBuild = if ($sln) { $sln.FullName } else { $csproj.FullName }
 
-            Write-Host "Building C# Loader: $targetBuild"
-            try {
-              dotnet restore $targetBuild
-              dotnet build $targetBuild -c Release -v minimal
-            } catch {
-              msbuild $targetBuild /p:Configuration=Release /p:Platform=x64 /v:minimal
-            }
+            Write-Host "Restoring and Building C# Project: $targetBuild"
+            nuget restore $targetBuild -Verbosity quiet -NonInteractive
+            msbuild $targetBuild /p:Configuration=Release /v:minimal
           } else {
             # Target C/C++ solution or project
             $sln = Get-ChildItem -Path "project_template" -Recurse -Filter "*external*.sln" | Select-Object -First 1
@@ -246,9 +240,9 @@ jobs:
           $builtExes = Get-ChildItem -Path "project_template" -Recurse -Filter "*.exe" | Where-Object {
             $_.FullName -notlike "*\.vs\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\packages\*"
           } | Sort-Object @{Expression={
-            if ($_.DirectoryName -match "EXE") { 0 }
+            if ($_.DirectoryName -match "bin") { 0 }
             elseif ($_.DirectoryName -match "Release") { 1 }
-            elseif ($_.DirectoryName -match "bin") { 2 }
+            elseif ($_.DirectoryName -match "EXE") { 2 }
             else { 3 }
           }}, LastWriteTime -Descending
 
@@ -270,8 +264,10 @@ jobs:
           New-Item -ItemType Directory -Path $tempPkgDir -Force | Out-Null
           Copy-Item $finalExe -Destination "$tempPkgDir/$finalExe" -Force
           
-          # Bundle client.dll & cimgui.dll if present anywhere in project
-          Get-ChildItem -Path "project_template" -Recurse -Include "client.dll", "cimgui.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+          # Bundle client.dll & cimgui.dll if present anywhere in project (case-insensitive)
+          Get-ChildItem -Path "project_template" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -match '^(client|cimgui)\.dll$'
+          } | ForEach-Object {
             Copy-Item $_.FullName -Destination $tempPkgDir -Force
             Write-Host "Bundled native dependency into package: $($_.Name)"
           }
