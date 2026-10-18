@@ -2,7 +2,7 @@
 """
 Auto Custom Panel Maker - Patch & Customization Script
 Used by GitHub Actions (and locally) to inject custom branding, logo, and KeyAuth credentials
-into the C/C++ project before compiling.
+directly into the DirectX 11 Panel C/C++ project before compiling.
 """
 
 import os
@@ -11,6 +11,7 @@ import argparse
 import urllib.request
 import zipfile
 import shutil
+import re
 from pathlib import Path
 
 try:
@@ -70,19 +71,29 @@ def sanitize_input(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def patch_file_content(file_path: Path, replacements: dict):
-    """Replace placeholder tokens in a target source file."""
+def patch_file_content(file_path: Path, replacements: dict, regex_replacements: list):
+    """Replace placeholder tokens and patterns in a target source file."""
     if not file_path.exists():
         log(f"Warning: file {file_path} does not exist, skipping patch.")
         return
 
     content = file_path.read_text(encoding="utf-8", errors="ignore")
     modified = False
+
+    # 1. Exact token replacements
     for token, val in replacements.items():
         if token in content:
             content = content.replace(token, val)
             modified = True
-            log(f"Injected: {token} -> {val} in {file_path.name}")
+            log(f"Injected exact match: '{token}' -> '{val}' in {file_path.name}")
+
+    # 2. Regex replacements
+    for pattern, repl in regex_replacements:
+        new_content, count = pattern.subn(repl, content)
+        if count > 0:
+            content = new_content
+            modified = True
+            log(f"Injected regex match ({count}x) in {file_path.name}")
 
     if modified:
         file_path.write_text(content, encoding="utf-8")
@@ -128,12 +139,14 @@ def main():
     elif args.icon_file and os.path.exists(args.icon_file):
         icon_source = Path(args.icon_file)
 
+    has_custom_ico = False
     if icon_source:
-        convert_image_to_ico(icon_source, target_ico)
+        if convert_image_to_ico(icon_source, target_ico):
+            has_custom_ico = True
         if temp_download.exists():
             temp_download.unlink()
 
-    # 3. Build replacement dictionary
+    # 3. Build replacement dictionaries
     safe_panel_name = sanitize_input(args.panel_name)
     safe_dev_name = sanitize_input(args.dev_name)
     safe_auth_name = sanitize_input(args.keyauth_name)
@@ -176,6 +189,12 @@ def main():
         'OBF("https://www.keyauth-manager.online/api/1.2/")': f'OBF("{safe_auth_url}")',
         'OBF("https://keyauth.win/api/1.2/")': f'OBF("{safe_auth_url}")',
 
+        # Panel Name & Branding
+        '"RED X CHEATS"': f'"{safe_panel_name}"',
+        '"WELCOME TO RED X CHEATS"': f'"WELCOME TO {safe_panel_name}"',
+        '"Welcome To RED X CHEATS': f'"Welcome To {safe_panel_name}',
+        '<ProjectName>RED X CHEATS</ProjectName>': f'<ProjectName>{safe_panel_name}</ProjectName>',
+
         # URL and Host string replacements
         "https://www.keyauth-manager.online/api/1.2/": safe_auth_url,
         "https://keyauth.win/api/1.2/": safe_auth_url,
@@ -183,20 +202,54 @@ def main():
         '"keyauth.win"': f'"{auth_host}"',
     }
 
+    regex_replacements = [
+        # CustomKeyAuth.hpp
+        (re.compile(r'inline\s+std::string\s+g_name\s*=\s*"[^"]*";'), f'inline std::string g_name = "{safe_auth_name}";'),
+        (re.compile(r'inline\s+std::string\s+g_ownerid\s*=\s*"[^"]*";'), f'inline std::string g_ownerid = "{safe_auth_owner}";'),
+        (re.compile(r'inline\s+std::string\s+g_secret\s*=\s*"[^"]*";'), f'inline std::string g_secret = "{safe_auth_secret}";'),
+        (re.compile(r'inline\s+std::string\s+g_version\s*=\s*"[^"]*";'), f'inline std::string g_version = "{safe_auth_version}";'),
+        (re.compile(r'inline\s+std::wstring\s+g_host\s*=\s*L"[^"]*";'), f'inline std::wstring g_host = L"{auth_host}";'),
+        (re.compile(r'inline\s+std::wstring\s+g_path\s*=\s*L"[^"]*";'), f'inline std::wstring g_path = L"{auth_path}";'),
+
+        # main.cpp KeyAuth initialization
+        (re.compile(r'std::string\s+name\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string name = std::string(OBF("{safe_auth_name}"));'),
+        (re.compile(r'std::string\s+ownerid\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string ownerid = std::string(OBF("{safe_auth_owner}"));'),
+        (re.compile(r'std::string\s+secret\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string secret = std::string(OBF("{safe_auth_secret}"));'),
+        (re.compile(r'std::string\s+version\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string version = std::string(OBF("{safe_auth_version}"));'),
+        (re.compile(r'std::string\s+url\s*=\s*std::string\(OBF\("[^"]*"\)\);'), f'std::string url = std::string(OBF("{safe_auth_url}"));'),
+
+        # ProjectName in .vcxproj
+        (re.compile(r'<ProjectName>[^<]*</ProjectName>'), f'<ProjectName>{safe_panel_name}</ProjectName>'),
+    ]
+
     # 4. Patch source files (config.h, resource.rc, main.cpp, or any .h/.cpp files)
     extensions_to_check = [".h", ".hpp", ".c", ".cpp", ".rc", ".cs", ".vcxproj"]
     for root, _, files in os.walk(proj_dir):
         for f in files:
             p = Path(root) / f
             if p.suffix.lower() in extensions_to_check:
-                patch_file_content(p, replacements)
-            # If an icon file is found anywhere in the project, replace it with the new custom icon
-            if p.suffix.lower() == ".ico" and target_ico.exists() and p != target_ico:
+                patch_file_content(p, replacements, regex_replacements)
+
+            # If an existing icon file is found, replace it with the new custom icon
+            if p.suffix.lower() == ".ico" and has_custom_ico and p != target_ico:
                 try:
                     shutil.copy(target_ico, p)
                     log(f"Replaced project icon: {p.name}")
                 except Exception:
                     pass
+
+            # If resources.rc is found and we have a custom icon, embed it
+            if p.name.lower() in ["resources.rc", "resource.rc"] and has_custom_ico:
+                try:
+                    rc_content = p.read_text(encoding="utf-8", errors="ignore")
+                    if "app.ico" not in rc_content:
+                        rc_content += '\n1 ICON "app.ico"\n'
+                        p.write_text(rc_content, encoding="utf-8")
+                        log(f"Added icon definition to {p.name}")
+                    # Copy app.ico to the same directory as the .rc file
+                    shutil.copy(target_ico, p.parent / "app.ico")
+                except Exception as e:
+                    log(f"Warning: could not inject icon into {p.name}: {e}")
 
     log("Customization complete! Source code is ready for compilation.")
 
