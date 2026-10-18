@@ -98,6 +98,21 @@ jobs:
           7z x "projects.zip" -o"project_template" -y | Out-Null
           Write-Host "Extracted DirectX 11 Panel project template successfully!"
 
+          # Ensure ext/DirectX/Lib/x64 has all required DirectX libraries (d3dx11.lib, etc.)
+          $targetDxDirs = @(
+            "project_template/examples/example_win32_directx11/ext/DirectX/Lib/x64",
+            "project_template/ext/DirectX/Lib/x64"
+          )
+          foreach ($td in $targetDxDirs) {
+            if (-not (Test-Path $td)) {
+              New-Item -ItemType Directory -Path $td -Force | Out-Null
+            }
+            if (Test-Path "deps/DirectX/Lib/x64") {
+              Copy-Item -Path "deps/DirectX/Lib/x64/*" -Destination $td -Force
+              Write-Host "Synced DirectX x64 libraries to: $td"
+            }
+          }
+
       - name: Restore NuGet Packages & Dependencies
         shell: pwsh
         run: |
@@ -157,6 +172,13 @@ jobs:
 
           Write-Host "Building DirectX 11 Panel GUI executable on 4 CPU cores: $($sln.FullName)"
           
+          # Inject DirectX Lib path into environment so linker always locates D3DX11.lib
+          $dxLibPath = (Resolve-Path "deps/DirectX/Lib/x64" -ErrorAction SilentlyContinue)
+          if ($dxLibPath) {
+            $env:LIB = "$($dxLibPath.Path);$env:LIB"
+            Write-Host "Injected DirectX Lib directory into LINK LIB environment: $($dxLibPath.Path)"
+          }
+
           # Maximize compilation speed using all 4 cores with 64-bit compiler binaries
           msbuild $sln.FullName `
             /p:Configuration=Release `
@@ -194,16 +216,32 @@ jobs:
           $finalExe = "$safeName.exe"
           Copy-Item $builtExe.FullName -Destination $finalExe -Force
           Write-Host "Created final executable: $finalExe"
+
+          # Create a complete standalone package with DirectX runtime DLLs (d3dx11_43.dll etc.)
+          $finalZip = "$safeName-Package.zip"
+          $tempPkgDir = "dist_package"
+          if (Test-Path $tempPkgDir) { Remove-Item $tempPkgDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $tempPkgDir -Force | Out-Null
+          Copy-Item $finalExe -Destination "$tempPkgDir/$finalExe" -Force
+          if (Test-Path "deps/DirectX/Bin/x64") {
+            Copy-Item -Path "deps/DirectX/Bin/x64/*" -Destination $tempPkgDir -Force
+          }
+          Compress-Archive -Path "$tempPkgDir/*" -DestinationPath $finalZip -Force
+          Remove-Item $tempPkgDir -Recurse -Force
+          Write-Host "Created standalone package with DirectX runtime: $finalZip"
           
           # Output environment variables
           echo "FINAL_EXE=$finalExe" >> $env:GITHUB_ENV
+          echo "FINAL_ZIP=$finalZip" >> $env:GITHUB_ENV
           echo "SAFE_NAME=$safeName" >> $env:GITHUB_ENV
 
       - name: Upload GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SAFE_NAME }}
-          path: ${{ env.FINAL_EXE }}
+          path: |
+            ${{ env.FINAL_EXE }}
+            ${{ env.FINAL_ZIP }}
           retention-days: 14
 
       - name: Create GitHub Release with Direct Download
@@ -219,7 +257,9 @@ jobs:
             - **KeyAuth App:** `${{ inputs.keyauth_name }}`
             - **Architecture:** x64 Standalone Executable (`/MT` Static Runtime)
             - **Build ID:** `${{ github.run_id }}`
-          files: ${{ env.FINAL_EXE }}
+          files: |
+            ${{ env.FINAL_EXE }}
+            ${{ env.FINAL_ZIP }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -247,6 +287,12 @@ jobs:
             $downloadUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
 
+          $pkgUrl = "https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_id }}/${{ env.FINAL_ZIP }}"
+          $downloadText = "[Standalone .EXE]($downloadUrl) • [Full Package .ZIP (with DirectX DLLs)]($pkgUrl)"
+          if ($status -ne "success") {
+            $downloadText = "[View GitHub Build Logs]($downloadUrl)"
+          }
+
           $payload = @{
             content = if ("${{ inputs.discord_user_id }}") { "<@${{ inputs.discord_user_id }}>" } else { $null }
             embeds = @(
@@ -258,7 +304,7 @@ jobs:
                   @{ name = "📌 Panel Name"; value = "${{ inputs.panel_name }}"; inline = $true },
                   @{ name = "👑 Developer"; value = "${{ inputs.dev_name }}"; inline = $true },
                   @{ name = "🔐 KeyAuth App"; value = "${{ inputs.keyauth_name }}"; inline = $true },
-                  @{ name = "⬇️ Direct Download"; value = "[Download Executable]($downloadUrl)"; inline = $false }
+                  @{ name = "⬇️ Direct Download"; value = $downloadText; inline = $false }
                 )
                 footer = @{ text = "Auto Custom Panel Maker • GitHub Actions Builder" }
                 timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
