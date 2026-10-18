@@ -13,15 +13,18 @@ on:
         type: string
       keyauth_name:
         description: "KeyAuth App Name"
-        required: true
+        required: false
+        default: "EXTERNAL"
         type: string
       keyauth_ownerid:
         description: "KeyAuth Owner ID"
-        required: true
+        required: false
+        default: "6862743278"
         type: string
       keyauth_secret:
         description: "KeyAuth Secret"
-        required: true
+        required: false
+        default: "bda5ce36ddc610adc203a9f904103ae13eaf4b20f3aacff9b8cd505fe916d301"
         type: string
       keyauth_version:
         description: "KeyAuth Version"
