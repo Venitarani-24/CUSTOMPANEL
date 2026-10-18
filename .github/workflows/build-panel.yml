@@ -118,7 +118,8 @@ jobs:
           if (Test-Path "project_template") {
             Remove-Item "project_template" -Recurse -Force
           }
-          7z x $targetZip -o"project_template" -y -bso0 -bsp0
+          # Unpack using password '1' (or unencrypted)
+          7z x $targetZip -o"project_template" -p1 -y -bso0 -bsp0
           $global:LASTEXITCODE = 0
           Write-Host "Extracted $projType project template successfully!"
 
