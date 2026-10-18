@@ -256,11 +256,25 @@ def main():
                     if "app.ico" not in rc_content:
                         rc_content += '\n1 ICON "app.ico"\n'
                         p.write_text(rc_content, encoding="utf-8")
-                        log(f"Added icon definition to {p.name}")
-                    # Copy app.ico to the same directory as the .rc file
+                        # Copy app.ico to the same directory as the .rc file
                     shutil.copy(target_ico, p.parent / "app.ico")
                 except Exception as e:
                     log(f"Warning: could not inject icon into {p.name}: {e}")
+
+    # 5. Ensure DirectX Lib/x64 directory and d3dx11.lib exist
+    deps_dx = Path(__file__).resolve().parent.parent / "deps" / "DirectX" / "Lib" / "x64"
+    if deps_dx.exists():
+        target_dx_dirs = [
+            proj_dir / "examples" / "example_win32_directx11" / "ext" / "DirectX" / "Lib" / "x64",
+            proj_dir / "ext" / "DirectX" / "Lib" / "x64",
+        ]
+        for dx_target_dir in target_dx_dirs:
+            dx_target_dir.mkdir(parents=True, exist_ok=True)
+            for lib_file in deps_dx.glob("*.lib"):
+                dest = dx_target_dir / lib_file.name
+                if not dest.exists():
+                    shutil.copy(lib_file, dest)
+            log(f"Verified DirectX x64 libraries at: {dx_target_dir}")
 
     log("Customization complete! Source code is ready for compilation.")
 
