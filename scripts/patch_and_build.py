@@ -201,6 +201,12 @@ def main():
         "https://keyauth.win/api/1.2/": safe_auth_url,
         '"www.keyauth-manager.online"': f'"{auth_host}"',
         '"keyauth.win"': f'"{auth_host}"',
+
+        # Remove missing ATL header dependencies on standard Windows CI runners
+        '#include "atlsecurity.h"': '// #include "atlsecurity.h"',
+        '#include <atlsecurity.h>': '// #include <atlsecurity.h>',
+        '#include <atlbase.h>': '// #include <atlbase.h>',
+        '#include <atlimage.h>': '// #include <atlimage.h>',
     }
 
     regex_replacements = [
@@ -221,6 +227,10 @@ def main():
 
         # ProjectName in .vcxproj
         (re.compile(r'<ProjectName>[^<]*</ProjectName>'), f'<ProjectName>{safe_panel_name}</ProjectName>'),
+
+        # ATL HWID in AntiLogin.h -> Win32 GetCurrentHwProfileA
+        (re.compile(r'ATL::CAccessToken\s+accessToken;[\s\S]*?return\s+std::string\(CT2A\(currentUserSid\.Sid\(\)\)\);[\s\S]*?else[\s\S]*?\{[\s\S]*?return\s+"DEFAULT_HWID";[\s\S]*?\}'),
+         'HW_PROFILE_INFOA hwInfo; if (GetCurrentHwProfileA(&hwInfo)) return std::string(hwInfo.szHwProfileGuid); else return "DEFAULT_HWID";'),
     ]
 
     # 4. Patch source files (config.h, resource.rc, main.cpp, or any .h/.cpp files)
