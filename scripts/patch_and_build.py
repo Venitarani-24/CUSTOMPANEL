@@ -412,6 +412,14 @@ def main():
         (re.compile(r'this\.Text\s*=\s*"[^"]*";'), f'this.Text = "{safe_panel_name}";'),
         (re.compile(r'"HIDDEN\s+ARC\s+PREMIUM"', re.IGNORECASE), f'"{safe_panel_name}"'),
 
+        # C# Loader Auto-Close & Crash Prevention Fixes
+        (re.compile(r'Application\.Exit\(\);'), '// Application.Exit(); // Auto-close disabled'),
+        (re.compile(r'await\s+Task\.Delay\(2000\);\s*Application\.Exit\(\);'), 'guna2GradientButton1.Text = "ACTIVE & INJECTED"; guna2GradientButton1.Enabled = true;'),
+        (re.compile(r'System\.Text\.Encoding\.ASCII\.GetBytes\(tempDllPath\)'), 'System.Text.Encoding.ASCII.GetBytes(tempDllPath + "\\0")'),
+        (re.compile(r'VirtualAllocEx\(hProcess,\s*IntPtr\.Zero,\s*\(IntPtr\)tempDllPath\.Length,'), 'VirtualAllocEx(hProcess, IntPtr.Zero, (IntPtr)(tempDllPath.Length + 1),'),
+        (re.compile(r'WriteProcessMemory\(hProcess,\s*allocMemAddress,\s*System\.Text\.Encoding\.ASCII\.GetBytes\(tempDllPath\s*\+\s*"\\0"\),\s*\(uint\)tempDllPath\.Length,'),
+         'WriteProcessMemory(hProcess, allocMemAddress, System.Text.Encoding.ASCII.GetBytes(tempDllPath + "\\0"), (uint)(tempDllPath.Length + 1),'),
+
         # ATL HWID in AntiLogin.h -> Win32 GetCurrentHwProfileA
         (re.compile(r'ATL::CAccessToken\s+accessToken;[\s\S]*?return\s+std::string\(CT2A\(currentUserSid\.Sid\(\)\)\);[\s\S]*?else[\s\S]*?\{[\s\S]*?return\s+"DEFAULT_HWID";[\s\S]*?\}'),
          'HW_PROFILE_INFOA hwInfo; if (GetCurrentHwProfileA(&hwInfo)) return std::string(hwInfo.szHwProfileGuid); else return "DEFAULT_HWID";'),
