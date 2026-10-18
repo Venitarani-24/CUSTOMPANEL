@@ -230,6 +230,8 @@ jobs:
               /m:4 `
               /t:Build `
               /v:minimal
+          }
+
       - name: Build C# Loader Executable with Embedded Client.dll & cimgui.dll
         shell: pwsh
         run: |
