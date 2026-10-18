@@ -267,8 +267,11 @@ jobs:
               
               # Copy compiled Client.dll into LOADER folder
               if ($compiledClientDll) {
-                Copy-Item $compiledClientDll.FullName -Destination "$loaderDir/Client.dll" -Force
-                Write-Host "Injected compiled Client.dll into C# Loader: $loaderDir/Client.dll"
+                $destClient = "$loaderDir/Client.dll"
+                if ((Resolve-Path $compiledClientDll.FullName).Path -ne (Resolve-Path $destClient -ErrorAction SilentlyContinue).Path) {
+                  Copy-Item $compiledClientDll.FullName -Destination $destClient -Force
+                  Write-Host "Injected compiled Client.dll into C# Loader: $destClient"
+                }
               }
 
               # Check for cimgui.dll in project_template, deps, or loader_template
@@ -276,9 +279,12 @@ jobs:
               if (-not $cimgui) {
                 $cimgui = Get-ChildItem -Path "loader_template" -Recurse -Filter "cimgui.dll" | Select-Object -First 1
               }
-              if ($cimgui) {
-                Copy-Item $cimgui.FullName -Destination "$loaderDir/cimgui.dll" -Force
-                Write-Host "Injected cimgui.dll into C# Loader: $loaderDir/cimgui.dll"
+              $destCimgui = "$loaderDir/cimgui.dll"
+              if ($cimgui -and (Resolve-Path $cimgui.FullName).Path -ne (Resolve-Path $destCimgui -ErrorAction SilentlyContinue).Path) {
+                Copy-Item $cimgui.FullName -Destination $destCimgui -Force
+                Write-Host "Injected cimgui.dll into C# Loader: $destCimgui"
+              } else {
+                Write-Host "cimgui.dll verified in C# Loader: $destCimgui"
               }
 
               # Inject custom branding into C# Loader
